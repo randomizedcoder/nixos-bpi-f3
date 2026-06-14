@@ -1,4 +1,4 @@
-# nixos-bpi-f3-
+# nixos-bpi-f3
 nixos-bpi-f3 Banana Pi BPI-F3
 
 https://docs.banana-pi.org/en/BPI-F3/BananaPi_BPI-F3
