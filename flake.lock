@@ -1,0 +1,65 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1781074563,
+        "narHash": "sha256-md8WlXOlfnIeHeOScMTTHFyf2d6iaTwPl2apR5EQ3P4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "9ae611a455b90cf061d8f332b977e387bda8e1ca",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "opensbi-spacemit": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780627050,
+        "narHash": "sha256-KHPr56pJw2C/y8Fa8WRUUsqjNms6gHtp9VAnsTToQnE=",
+        "ref": "k1-bl-v2.2.y",
+        "rev": "34143f5f665be8b86ebb71b8085a1ade7f8b97ad",
+        "revCount": 1461,
+        "type": "git",
+        "url": "https://gitee.com/spacemit-buildroot/opensbi.git"
+      },
+      "original": {
+        "ref": "k1-bl-v2.2.y",
+        "rev": "34143f5f665be8b86ebb71b8085a1ade7f8b97ad",
+        "type": "git",
+        "url": "https://gitee.com/spacemit-buildroot/opensbi.git"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "opensbi-spacemit": "opensbi-spacemit",
+        "uboot-spacemit": "uboot-spacemit"
+      }
+    },
+    "uboot-spacemit": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780627101,
+        "narHash": "sha256-9CSB/R8kAXuViJPt5ZcdM8IzT2aJWZVHuq/bOgWGc84=",
+        "ref": "k1-bl-v2.2.y",
+        "rev": "46a4f510352684407c074b7c0e9114b5443dcc59",
+        "revCount": 82718,
+        "type": "git",
+        "url": "https://gitee.com/spacemit-buildroot/uboot-2022.10.git"
+      },
+      "original": {
+        "ref": "k1-bl-v2.2.y",
+        "rev": "46a4f510352684407c074b7c0e9114b5443dcc59",
+        "type": "git",
+        "url": "https://gitee.com/spacemit-buildroot/uboot-2022.10.git"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

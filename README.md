@@ -1,23 +1,192 @@
 # nixos-bpi-f3
-nixos-bpi-f3 Banana Pi BPI-F3
 
-https://docs.banana-pi.org/en/BPI-F3/BananaPi_BPI-F3
+NixOS for the [Banana Pi BPI-F3](https://docs.banana-pi.org/en/BPI-F3/BananaPi_BPI-F3) — an
+octa-core [SpacemiT K1](https://www.spacemit.com/en/key1/) RISC-V SBC (RVA22 + RVV 1.0).
 
-I have https://docs.banana-pi.org/en/BPI-F3/BananaPi_BPI-F3 system, and want to see if I can run NixOS on it.  looking at this URL, there are many versions of linux supported already, and I know nixos has RISCV support, so I wonder how easy this will be?10:23 AMClaude responded: Short version: it's very doable, but it's a "roll your own" project, not a flash-an-image afternoon.Synthesized kernel support, bootloader requirements, and cross-compilation feasibilitySynthesized kernel support, bootloader requirements, and cross-compilation feasibilityShort version: it's very doable, but it's a "roll your own" project, not a flash-an-image afternoon. None of the distros on that BPI-F3 page (Bianbu, Armbian, Fedora, openSUSE, Gentoo, Arch) are NixOS, and there's no turnkey NixOS image for the board. You'd be assembling the pieces yourself. The good news is that the hard upstream work has largely happened, and your Threadripper makes the usual RISC-V pain point — slow native builds — mostly go away.
-Here's the actual state of the moving parts as of now:
-NixOS riscv64 is community-tier, not official. NixOS has no official support for the riscv64-linux architecture on the stable or unstable channels. In practice that means you lean on third-party binary caches with RISC-V coverage (the NixOS wiki lists cache.ztier.in; zhaofengli's setup uses beam.attic.rs/riscv) or you build natively, which is slow. Given your P620, the clean path is to cross-compile from x86_64 using pkgsCross.riscv64-linux and/or set the board up as a remote-built target — you sidestep the whole "compiling the world on an SBC" problem that makes RISC-V Nix miserable for most people. NixOS Wiki
-Mainline kernel support for the K1 is real and recent. Initial SpacemiT K1 SoC support — the X60 core compatibles, CLINT, PLIC, UART, and crucially an in-tree k1-bananapi-f3.dts for your exact board — was applied to riscv/linux.git in early 2025. Since then it's been filling in incrementally toward a headless system (clk, pinctrl/gpio, storage, ethernet). PCIe is the most recent arrival: the SpacemiT PCIe host driver has been accepted upstream, with the PHY driver series rebased onto v6.19-rc1 as of December 2025. So a current mainline kernel will boot the F3 and give you serial, SD/eMMC, ethernet, and increasingly PCIe. What's not upstream: the IMG BXE GPU and the 2-TOPS AI block — those only really work on the vendor Bianbu kernel (a patched 6.6.x fork). For a headless NAS/server/dev box, mainline is fine; for desktop/GPU, you're stuck on the vendor tree. iuiu
-There's a head start, but for a sibling board. YooLc/nixos-spacemit is a Nix flake for running NixOS on SpacemiT K1 hardware — but it targets the MUSE Pi Pro, and the author notes they've only tested booting via UEFI + ISO, with SD-image/eMMC install left as a "do it yourself" exercise. Same SoC as your F3, so the kernel/overlay bits transfer; the board DTS and boot specifics won't directly. zhaofengli/nixos-riscv64 (HiFive Unmatched) is the other good reference — not K1, but it shows the U-Boot + extlinux/SD-image plumbing the Nix way. GitHub
-Boot flow is the fiddly bit. The board ships with vendor pi-opensbi + U-Boot 2022.10. Mainline EFI boot became possible relatively recently, but per the Fedora effort, the BPI-F3 will likely throw a load access fault unless U-Boot is updated. So budget time for getting a mainline-friendly U-Boot (or a recent vendor one) doing extlinux/EFI hand-off. Fedora Project
-One caveat worth flagging given where the ecosystem is heading: the K1's X60 cores are RVA22 + RVV 1.0, not RVA23. Upstream riscv64 distros are starting to rebase their baseline to RVA23 — there's active discussion that Ubuntu 25.10/26.04 for riscv64 target RVA23 and may drop RVA22 hardware like the K1. NixOS's riscv64 builds aren't there yet, but if the community cache ever moves its baseline to RVA23, prebuilt binaries could stop running on your board. Cross-compiling yourself with an explicit RVA22 target insulates you from that. Spacemit
-So, realistic difficulty for someone with your background: a solid weekend-or-three project, low risk of being impossible, headless-first. I'd start by getting a mainline kernel + the in-tree F3 DTS booting from SD via updated U-Boot, confirm serial/eth/storage, then layer the Nix SD-image module on top, cross-built from the P620. Want me to sketch a starting flake.nix / SD-image config adapted from the MUSE Pi Pro flake and the nixos-riscv64 boot structure for the F3 specifically?You said: I have another lychee pi 4a and I've being using this repo to build for it.I have another lychee pi 4a and I've being using this repo to build for it.   I suppose this could be a good starting points? https://github.com/randomizedcoder/nixos-licheepi4a/tree/main1:48 PMClaude responded: Yes — honestly that's a better base than the K1 flake I pointed you at last turn.Evaluated repo as excellent foundation, mapped required board-specific retargetingEvaluated repo as excellent foundation, mapped required board-specific retargetingYes — honestly that's a better base than the K1 flake I pointed you at last turn. randomizedcoder's repo is a fork of ryan4yin's nixos-licheepi4a (ryan4yin being the "NixOS & Flakes" book author), and that project is the canonical, mature template for exactly this kind of job: it cross-compiles from x86_64 to riscv64, pulls a board kernel from a vendor source as a flake input, patches the upstream sd-image.nix for the board, and assembles an SD image with U-Boot+SPL baked in. That scaffolding is 90% of what makes RISC-V-on-NixOS annoying, and it's already solved there. Since you've been building with it, you already know the workflow. NixOS & Flakes
-The catch is the obvious one: the Lichee Pi 4A is a T-Head TH1520 (XuanTie C910 cores), and the BPI-F3 is a SpacemiT K1 (X60 cores). Different SoC, so everything board-specific gets retargeted. Concretely, the files/inputs that change:
+This flake **cross-compiles** a headless NixOS SD/eMMC image from an `x86_64` host to `riscv64`,
+with the SpacemiT vendor bootloader (U-Boot 2022.10 + OpenSBI) built from source and embedded in
+the image. There is no turnkey NixOS image for this board upstream — this is a "roll your own"
+build, adapted from [nixos-licheepi4a](https://github.com/randomizedcoder/nixos-licheepi4a).
 
-Kernel source input. The LP4A flake points at revyos/thead-kernel/lpi4a as a non-flake input because the TH1520 isn't mainlined. For the K1 you swap that for SpacemiT's tree (spacemit-com/linux, or the Bianbu linux-6.6 gitee) — or, and this is the nice part, you may not need a vendor kernel at all. As we covered, the K1 SoC and the k1-bananapi-f3.dts are in mainline now, so for a headless box you can likely use a stock pkgs.linuxPackages_latest with the in-tree DTS and drop the custom-kernel machinery entirely. That makes the F3 port simpler than the LP4A original, not harder.
-DTS. *lpi4a*.dts → k1-bananapi-f3.dts (in-tree if you go mainline; under the vendor tree's spacemit dir otherwise).
-modules/licheepi4a.nix. This board module (console = serial, kernel package selection, firmware, kernelParams) becomes a bpi-f3.nix equivalent. Console is ttyS0 on the F3's UART header; pick the kernel package accordingly.
-U-Boot + SD image layout. This is where you can't just copy-paste. The LP4A writes T-Head SPL/U-Boot at TH1520-specific offsets and uses fastboot to flash. The K1 uses pi-opensbi + a different U-Boot with its own SPL offsets, and (per the Fedora effort) the F3 wants a reasonably current U-Boot or you'll hit a load-access fault on boot. So the sd-image-*.nix's postBuildCommands / dd … seek= offsets and the U-Boot package all need to be K1 values.
-Toolchain quirk. The LP4A flake forces gcc13Stdenv for the thead kernel. If you go mainline for the K1 you'll likely use the default stdenv; if you use the vendor tree, check what it wants.
+## Quick start
 
-Two things that carry over unchanged: the cross-compile-from-x86_64 strategy (perfect for your P620 — you'll build the riscv64 closure on the Threadripper, not the board), and the GPU caveat — the LP4A README notes the TH1520 GPU driver is closed-source and tightly coupled to the OS, which makes it very hard to get working on NixOS. The K1's IMG BXE GPU is the same story, so plan headless either way. GitHub
-So the porting plan: fork it again, rip out the thead-kernel input and the gcc13 override, point the kernel/DTS at mainline (or SpacemiT's tree if mainline's too thin for what you need), rewrite the board module and the SD-image U-Boot offsets for the K1, then nix build .#sdImage cross from the P620. The structure stays; you're swapping the SoC-specific leaves.
+You build on an **`x86_64-linux`** machine; the flake cross-compiles to `riscv64` automatically
+(it sets `nixpkgs.crossSystem`), so there is nothing special to configure — just `nix build`.
+
+**Prerequisites**
+
+- Nix with flakes enabled. Either use `--extra-experimental-features 'nix-command flakes'` on each
+  command, or add to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`):
+  ```
+  experimental-features = nix-command flakes
+  ```
+- A fast x86_64 builder with plenty of disk/RAM. Because we target `rv64gcv` (see Scope), the build
+  gets **no** binary-cache hits and compiles the cross toolchain + the whole closure from source —
+  budget a long first build (hours, not minutes) and tens of GB of store.
+
+**Clone, build, flash**
+
+```sh
+# 1. Clone
+git clone https://github.com/randomizedcoder/nixos-bpi-f3.git
+cd nixos-bpi-f3
+
+# 2. Cross-compile the SD image (runs on x86_64, produces a riscv64 image).
+#    Tip: add `--log-format internal-json -v |& nom` (nix-output-monitor) to watch progress,
+#    or `-j auto` to use all cores.
+nix build .#sdImage
+
+# 3. Flash the whole image to an SD card (bootloader blobs are already embedded — see below).
+lsblk                                   # find your card, e.g. /dev/sdX  (NOT a partition)
+sudo dd if=result/sd-image/nixos-bpi-f3-sd-image-*.img \
+        of=/dev/sdX bs=4M conv=fsync status=progress
+
+# 4. Insert the card, connect a USB-UART (115200 8N1), power on, and log in as bpi / bpi-f3.
+```
+
+That's it — no manual U-Boot flashing, no separate firmware step. The SpacemiT bootloader is built
+from source and `dd`'d into the image during the build.
+
+> First time on RISC-V Nix? You don't need a riscv64 machine or QEMU — cross-compilation does it all
+> on x86_64. If a build step is too slow locally, point Nix at a beefier
+> [remote builder](https://nix.dev/manual/nix/stable/advanced-topics/distributed-builds).
+
+## Scope
+
+- **Headless, mainline kernel.** Uses a recent nixpkgs kernel with the in-tree
+  `k1-bananapi-f3` device tree. Serial, SD/eMMC, USB and Gigabit Ethernet are supported.
+- **No GPU / NPU.** The IMG BXE GPU and the AI accelerator only work on the vendor (Bianbu) kernel.
+  If you need them, you'll have to package that kernel — out of scope here.
+- **ISA baseline `rv64gcv` (RVV 1.0 enabled).** The K1's X60 cores implement RVV 1.0. Note this
+  diverges from the riscv64 community binary caches (which target `rv64gc`), so **the whole closure
+  is built locally** — the first build is long and gets no cache hits. Build it on a fast machine.
+
+## Repository layout
+
+The `flake.nix` is intentionally thin; everything substantive is a module/derivation under `nix/`:
+
+```
+flake.nix                              # inputs + outputs wiring
+nix/
+  cross.nix                            # cross target: riscv64, rv64gcv / lp64d
+  overlay.nix                          # exposes the bootloader packages
+  modules/
+    bpi-f3.nix                         # board module: kernel, K1 driver config, console, firmware
+    user-group.nix                     # default user / hostname
+    sd-image/
+      sd-image.nix                     # patched generic sd-image module (MBR + raw-blob dd hook)
+      sd-image-bpi-f3.nix              # board image: extlinux, kernelParams, dd of the boot blobs
+  pkgs/
+    u-boot/default.nix                 # vendor U-Boot -> FSBL.bin, bootinfo_emmc.bin, u-boot.itb
+    opensbi/default.nix                # vendor OpenSBI -> fw_dynamic.itb
+```
+
+## Build outputs
+
+The [Quick start](#quick-start) covers the common path (`nix build .#sdImage`). Individual outputs:
+
+```sh
+nix build .#sdImage    # default; the full SD image -> result/sd-image/*.img (uncompressed)
+nix build .#uboot      # bootloader only: FSBL.bin, bootinfo_emmc.bin, u-boot.itb
+nix build .#opensbi    # OpenSBI only: fw_dynamic.itb
+```
+
+Building `.#uboot` / `.#opensbi` on their own is handy when iterating on the (highest-risk) vendor
+bootloader build without rebuilding the kernel and rootfs.
+
+## Flashing
+
+See [Quick start](#quick-start) step 3 for the `dd` command. Two things worth knowing:
+
+- The bootloader blobs are embedded at their raw offsets during the build, so a plain whole-image
+  `dd` is all that's needed — no separate U-Boot flashing.
+- The root (ext4) partition **auto-expands** to fill the card on first boot.
+- The same image boots from **eMMC** too (the BootROM checks both); write it to the eMMC device the
+  same way.
+
+## Boot flow & on-disk layout
+
+The SpacemiT BootROM reads a small boot-info header at sector 0, then chains through the FSBL (SPL),
+OpenSBI and U-Boot. These live at fixed raw sector offsets ahead of the first partition (matching
+Armbian's `write_uboot_platform`):
+
+| Artifact | Sector | Byte offset | Source |
+| --- | --- | --- | --- |
+| `bootinfo_emmc.bin` | 0 | `0x0` | `.#uboot` |
+| `FSBL.bin` (SPL) | 1 | `0x200` | `.#uboot` |
+| `fw_dynamic.itb` (OpenSBI) | 1280 | `0x140000` | `.#opensbi` |
+| `u-boot.itb` (U-Boot proper) | 2048 | `0x200000` | `.#uboot` |
+
+The two partitions (both in the one MBR table, first one starting at 16 MiB) are:
+
+| Part | Filesystem | Label | Contents |
+| --- | --- | --- | --- |
+| 1 | FAT32 (`vfat`) | `BOOT` | `extlinux.conf` + kernel + DTB + initrd |
+| 2 | ext4 | `NIXOS_SD` | root filesystem (auto-expands on first boot) |
+
+### Why the partition table is MBR, not GPT
+
+The on-disk **partition table is MBR** (a.k.a. "msdos"/"dos"). Note this is a *different layer* from
+the boot partition's **FAT32 filesystem** — "msdos" as a partition *table* means MBR, while FAT32 is
+the *filesystem* living inside partition 1. They're independent; FAT32 works inside either an MBR or a
+GPT partition.
+
+We must use MBR because of the raw-sector boot blobs above:
+
+- A **GPT** keeps its primary header at **sector 1 (LBA1)** — exactly where `FSBL.bin` is `dd`'d.
+  Writing the SPL there corrupts the GPT.
+- **MBR** keeps all its metadata in **sector 0** only (partition table at byte offset 446). The tiny
+  (~80 byte) `bootinfo_emmc.bin` at offset 0 fits *before* that table, and sectors 1+ are free for the
+  bootloader. No collision.
+
+This is exactly what Armbian — one of the distros listed on the
+[BPI-F3 page](https://docs.banana-pi.org/en/BPI-F3/BananaPi_BPI-F3) — does for this board. From
+`config/sources/families/spacemit.conf`:
+
+```bash
+pre_prepare_partitions() {
+	declare -g OFFSET="4"                       # first partition at 4 MiB (we use 16 MiB)
+	declare -g IMAGE_PARTITION_TABLE="msdos"    # MBR, not GPT
+}
+```
+
+which Armbian's core turns into an `sfdisk` `label: dos` (MBR) table.
+
+### Boot chain
+
+BootROM → FSBL (SPL) → OpenSBI → U-Boot proper → extlinux → Linux kernel.
+
+## Serial console
+
+Connect a 3.3 V USB-UART to the F3's debug UART header and open it at **115200 8N1**:
+
+```sh
+minicom -D /dev/ttyUSB0 -b 115200      # or: picocom -b 115200 /dev/ttyUSB0
+```
+
+Kernel console is `ttyS0,115200` with `earlycon=sbi` for early output.
+
+## Default login
+
+- user: **`bpi`**
+- password: **`bpi-f3`**
+
+Change these in `nix/modules/user-group.nix` (regenerate the hash with `mkpasswd -m yescrypt`)
+before putting the board on an untrusted network.
+
+## Known limitations / status
+
+- **GPU/NPU:** not supported (vendor kernel only).
+- **PCIe:** the mainline SpacemiT PCIe host/PHY support is recent; verify on your kernel version.
+- **Wi-Fi:** the on-board chip (e.g. `8852bs`) needs an out-of-tree driver — not included.
+- **Binary caches:** `rv64gcv` means no community-cache hits; expect long first builds.
+
+## References
+
+- BPI-F3 docs: <https://docs.banana-pi.org/en/BPI-F3/BananaPi_BPI-F3>
+- SpacemiT U-Boot 2022.10: <https://gitee.com/spacemit-buildroot/uboot-2022.10>
+- SpacemiT OpenSBI: <https://gitee.com/spacemit-buildroot/opensbi>
+- Armbian (BPI-F3 board + spacemit family configs): <https://github.com/BPI-SINOVOIP/armbian-build>
+- Base flake (Lichee Pi 4A): <https://github.com/randomizedcoder/nixos-licheepi4a>
+
+See [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) for the design and [`PROGRESS.md`](./PROGRESS.md) for status.
