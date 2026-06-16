@@ -2,6 +2,27 @@
 
 Running log for the [implementation plan](./IMPLEMENTATION.md). Updated as work proceeds.
 
+## Outcome
+
+✅ **Done — boots to `bpi-f3 login:` on real hardware from the SD card** (NixOS 26.11, mainline kernel
+7.0.12, `rv64gcv`). Verified working: serial console, SD root **r/w**, both Gigabit Ethernet ports
+(`k1_emac`/RTL8211F, DHCP), NVMe over PCIe, USB 2.0/3.0, SSH.
+
+Final working configuration:
+
+- **U-Boot:** Armbian's fork (`pyavitz/spacemit-u-boot` @ `k1-bl-v2.2.9`) + its patch set — `001` adds
+  the raw-offset SPL fallback (OpenSBI→`0x500`/sector 1280, U-Boot→`0x800`/sector 2048), `002`/`004` add
+  the MMC boot target + extlinux. Banner renamed to "NixOS" via `CONFIG_LOCALVERSION`.
+- **OpenSBI:** SpacemiT gitee tree, built with `platform-cflags-y=-std=gnu17` (GCC 15 / C23).
+- **Image:** MBR table, four boot blobs `dd`'d at sectors 0/1/1280/2048, first partition at 16 MiB;
+  extlinux boot; kernel cmdline kept under U-Boot's 256-byte cap.
+- **Kernel:** nixpkgs `linuxPackages_latest` (7.0.12) with forced K1 Kconfig, `mmc_block` force-loaded in
+  initrd, and a **DT overlay re-adding the SD-card slot** (`mmc@d4280000`,
+  `no-mmc`/`no-sdio`/`no-1-8-v`/`broken-cd`/`disable-wp`) — mainline ships only the eMMC node.
+
+Known minor: the RTC isn't persisted, so the clock relies on NTP at boot (TLS fails until
+`systemd-timesyncd` syncs). See the README's *Challenges worked around* / *Limitations*.
+
 ## Status
 
 | # | Step | Status | Notes |
