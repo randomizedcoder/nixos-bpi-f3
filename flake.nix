@@ -67,10 +67,20 @@
             };
 
             # `nix fmt` + `nix flake check`'s formatting gate (nixfmt-rfc-style + deadnix).
+            # prettier reflows Markdown prose (proseWrap=never -> let the renderer
+            # soft-wrap; no hard line breaks). Scoped to *.md so it never touches
+            # flake.lock or other files.
             treefmt = {
               projectRootFile = "flake.nix";
-              programs.nixfmt.enable = true;
-              programs.deadnix.enable = true;
+              programs = {
+                nixfmt.enable = true;
+                deadnix.enable = true;
+                prettier = {
+                  enable = true;
+                  includes = [ "*.md" ];
+                  settings.proseWrap = "never";
+                };
+              };
             };
 
             # `nix flake check` lint gate.
