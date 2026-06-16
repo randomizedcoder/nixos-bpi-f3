@@ -53,8 +53,12 @@ from source and `dd`'d into the image during the build.
 
 ## Scope
 
-- **Headless, mainline kernel.** Uses a recent nixpkgs kernel with the in-tree
-  `k1-bananapi-f3` device tree. Serial, SD/eMMC, USB and Gigabit Ethernet are supported.
+- **Headless, mainline kernel.** Uses a recent nixpkgs kernel (`linuxPackages_latest`, 7.0.x) with the
+  in-tree `k1-bananapi-f3` device tree. Confirmed working on hardware: serial console, **SD card** and
+  eMMC, both **Gigabit Ethernet** ports, USB 2.0/3.0, **NVMe over PCIe**, and SSH.
+- **SD-card slot needs a DT overlay.** Mainline's `k1-bananapi-f3.dtb` only wires up the eMMC; the
+  removable SD slot controller (`mmc@d4280000`) is missing upstream. This flake adds it back via a
+  device-tree overlay (see `nix/modules/bpi-f3.nix`), so the kernel can use the card we boot from.
 - **No GPU / NPU.** The IMG BXE GPU and the AI accelerator only work on the vendor (Bianbu) kernel.
   If you need them, you'll have to package that kernel — out of scope here.
 - **ISA baseline `rv64gcv` (RVV 1.0 enabled).** The K1's X60 cores implement RVV 1.0. Note this
@@ -176,8 +180,12 @@ before putting the board on an untrusted network.
 
 ## Known limitations / status
 
+- **Working (verified on hardware):** serial console, SD card (via the DT overlay) + eMMC, both GbE
+  ports, USB 2.0/3.0, NVMe over PCIe, SSH.
+- **SD slot via overlay:** mainline lacks the SD controller node for this board; we re-add it
+  (`spacemit,k1-sdhci` @ `d4280000`, `no-mmc`/`no-sdio`/`no-1-8-v`/`broken-cd`/`disable-wp`). If a
+  future kernel adds the node upstream, drop the overlay.
 - **GPU/NPU:** not supported (vendor kernel only).
-- **PCIe:** the mainline SpacemiT PCIe host/PHY support is recent; verify on your kernel version.
 - **Wi-Fi:** the on-board chip (e.g. `8852bs`) needs an out-of-tree driver — not included.
 - **Binary caches:** `rv64gcv` means no community-cache hits; expect long first builds.
 

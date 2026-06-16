@@ -44,19 +44,18 @@
     "uboot-spacemit": {
       "flake": false,
       "locked": {
-        "lastModified": 1780627101,
-        "narHash": "sha256-9CSB/R8kAXuViJPt5ZcdM8IzT2aJWZVHuq/bOgWGc84=",
-        "ref": "k1-bl-v2.2.y",
-        "rev": "46a4f510352684407c074b7c0e9114b5443dcc59",
-        "revCount": 82718,
-        "type": "git",
-        "url": "https://gitee.com/spacemit-buildroot/uboot-2022.10.git"
+        "lastModified": 1769599337,
+        "narHash": "sha256-hYrA0lwZGn0IfzWp6CGghtPK7c85WG69Upd25ie+vbQ=",
+        "owner": "pyavitz",
+        "repo": "spacemit-u-boot",
+        "rev": "d61c8c77e241314438dce31d9ff1b1cbd9d53688",
+        "type": "github"
       },
       "original": {
-        "ref": "k1-bl-v2.2.y",
-        "rev": "46a4f510352684407c074b7c0e9114b5443dcc59",
-        "type": "git",
-        "url": "https://gitee.com/spacemit-buildroot/uboot-2022.10.git"
+        "owner": "pyavitz",
+        "ref": "k1-bl-v2.2.9-release",
+        "repo": "spacemit-u-boot",
+        "type": "github"
       }
     }
   },

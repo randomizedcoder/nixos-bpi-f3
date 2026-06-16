@@ -6,8 +6,10 @@
 
     # SpacemiT vendor bootloader sources (non-flake). Pinned to the
     # k1-bl-v2.2.10-release tag revisions. See nix/pkgs/{u-boot,opensbi}.
+    # Armbian's U-Boot fork — built with Armbian's patch set (see nix/pkgs/u-boot).
+    # The stock vendor U-Boot can't extlinux-boot a generic distro; this can.
     uboot-spacemit = {
-      url = "git+https://gitee.com/spacemit-buildroot/uboot-2022.10.git?ref=k1-bl-v2.2.y&rev=46a4f510352684407c074b7c0e9114b5443dcc59";
+      url = "github:pyavitz/spacemit-u-boot/k1-bl-v2.2.9-release";
       flake = false;
     };
     opensbi-spacemit = {

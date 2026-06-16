@@ -16,8 +16,19 @@
 #   make k1_defconfig && make            # default `all` builds the SPL/FSBL + bootinfo
 #   make u-boot.itb                      # FIT assembled from u-boot-nodtb.bin via mkimage
 #
+# We build Armbian's exact U-Boot (pyavitz/spacemit-u-boot @ k1-bl-v2.2.9-release)
+# WITH Armbian's patch set, because the stock vendor U-Boot is unusable for a generic
+# distro:
+#   - its SPL loads OpenSBI/U-Boot only from GPT partitions *named* "opensbi"/"uboot"
+#     (common/spl/spl_mmc.c); 001-MBR-support adds the raw-offset fallback
+#     (opensbi -> sector 0x500/1280, uboot -> 0x800/2048) that our MBR image relies on;
+#   - BOOT_TARGET_DEVICES only lists QEMU and it boots via bespoke env scripts, not
+#     extlinux; 002 adds the mmc boot target + kernel/fdt/ramdisk load addresses and
+#     004 adds syslinux/extlinux support, which NixOS's generic-extlinux-compatible needs.
+# (005/006 are OrangePi-only; 008 just quiets 001's debug prints.)
+#
 # `src` is injected by the overlay from the `uboot-spacemit` flake input
-# (gitee.com/spacemit-buildroot/uboot-2022.10, tag k1-bl-v2.2.10-release).
+# (github.com/pyavitz/spacemit-u-boot, tag k1-bl-v2.2.9-release).
 {
   lib,
   buildUBoot,
@@ -25,10 +36,21 @@
 }:
 
 buildUBoot {
-  version = "2022.10-k1-bl-v2.2.10";
+  version = "2022.10-k1-bl-v2.2.9";
   inherit src;
 
   defconfig = "k1_defconfig";
+
+  # Armbian's u-boot-spacemit-k1 patch set (vendored from armbian-build), in order.
+  extraPatches = [
+    ./patches/001-MBR-support.patch
+    ./patches/002-SpacemiT-K1X-Fixups.patch
+    ./patches/003-SpacemiT-K1X-Defconfig-Fixups.patch
+    ./patches/004-Add-syslinux-script-and-uefi-support.patch
+    ./patches/007-efi_loader-suppress-error-print-message.patch
+    ./patches/008-Quiet-MBR-support.patch
+    ./patches/009-Fixup-circular-deps.patch
+  ];
 
   # Extra Kconfig from armbian's post_config_uboot_target__extra_configs_for_bananapi_f3.
   # Appended to .config; `make` runs syncconfig to fold them in.
@@ -38,6 +60,9 @@ buildUBoot {
     CONFIG_FS_BTRFS=y
     CONFIG_CMD_BTRFS=y
     CONFIG_SPI_FLASH_USE_4K_SECTORS=y
+    # Override the Armbian patch's CONFIG_LOCALVERSION=" Armbian" so the U-Boot/SPL
+    # banner reads "U-Boot 2022.10 NixOS" instead.
+    CONFIG_LOCALVERSION=" NixOS"
   '';
 
   # Build the default target (SPL -> FSBL.bin + bootinfo_*.bin, plus u-boot proper),

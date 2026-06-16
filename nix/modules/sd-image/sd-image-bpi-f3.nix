@@ -24,14 +24,16 @@ in
     generic-extlinux-compatible.enable = true;
   };
 
+  # Keep this list short: the vendor U-Boot caps the kernel command line at 256
+  # bytes ("bootarg overflow ... > 256"), and NixOS already prepends a long
+  # init=/nix/store/...-nixos-system-.../init plus root=fstab/loglevel/lsm. The
+  # initrd mounts root by the NIXOS_SD label (via the generated fstab), so
+  # root=UUID/rootfstype are redundant here; console=tty1 is pointless headless.
   boot.kernelParams = [
-    # Serial console on UART0 (the F3's debug UART header). earlycon=sbi gives
-    # output before the 8250 driver probes. tty1 kept as a secondary console.
-    "earlycon=sbi"
-    "console=tty1"
+    # Direct UART0 earlycon (0xd4017000, reg-shift=2/io-width=4 -> mmio32). Prints
+    # from the very start; earlycon=sbi produced nothing on this board.
+    "earlycon=uart8250,mmio32,0xd4017000"
     "console=ttyS0,115200"
-    "root=UUID=${rootPartitionUUID}"
-    "rootfstype=ext4"
     "rootwait"
     "rw"
   ];

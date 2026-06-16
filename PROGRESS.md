@@ -20,7 +20,7 @@ Running log for the [implementation plan](./IMPLEMENTATION.md). Updated as work 
 | V | Verify: evaluation | ✅ done | `nix eval` of `.#opensbi`, `.#uboot`, `.#sdImage` drvPaths all succeed. |
 | V2 | Verify: full build (compile) | ✅ done | `nix build .#sdImage` succeeds end-to-end (after the 2 fixes below). 3.15 GiB image. |
 | V2a | Verify: on-disk layout | ✅ done | MBR table; part1 FAT32 bootable @16 MiB; part2 ext4. All 4 blobs byte-exact at sectors 0/1/1280/2048; bootinfo magic 0xB00714F0 @0. extlinux.conf + kernel + initrd + k1-bananapi-f3.dtb present. |
-| V3 | Verify: hardware bring-up | ⬜ todo | Flash, attach UART, watch OpenSBI→U-Boot→extlinux→kernel; confirm SD/eMMC/eth. (User, on-device.) |
+| V3 | Verify: hardware bring-up | ✅ **done** | Boots to `bpi-f3 login:` on real hardware from SD. Root mounts r/w; both GbE NICs, NVMe/PCIe, USB2/3, SSH all up. |
 
 Legend: ⬜ todo · 🟡 in progress · ✅ done · ⛔ blocked
 
@@ -74,3 +74,80 @@ Legend: ⬜ todo · 🟡 in progress · ✅ done · ⛔ blocked
   - FAT boot partition holds `extlinux.conf` (correct serial-console cmdline), the kernel Image,
     initrd, and `spacemit/k1-bananapi-f3.dtb` (referenced via `FDT`).
   Software build + image layout fully validated. Only on-hardware boot (V3) remains.
+- **2026-06-15** — First hardware boot attempt: card verified good on the device
+  (`xxd /dev/sdb` shows bootinfo magic `f014 07b0`; MBR table; correct partitions), DIP switches at
+  default (SD tried first), minicom 115200 8N1 flow-control off — but only a **brief garbled UART
+  burst then silence**. Root-caused from the U-Boot source:
+  - `common/spl/spl_mmc.c` (vanilla vendor U-Boot, which we built) loads OpenSBI/U-Boot **only from
+    GPT partitions named "opensbi"/"uboot"** — it does NOT read raw sector offsets. Our MBR + raw
+    offsets meant the SPL/FSBL ran, found neither partition, and hung → exactly the symptom.
+  - Armbian's raw-offset scheme works only because of its `001-MBR-support.patch`, which hardcodes the
+    fallback `opensbi -> 0x500 (sector 1280)`, `uboot -> 0x800 (sector 2048)` — **the exact offsets we
+    already dd to**. We'd built vanilla vendor U-Boot without that patch.
+  - Additionally, vanilla `BOOT_TARGET_DEVICES` lists only QEMU and boots via bespoke env scripts
+    (`loadknl`/`loaddtb` + EEPROM DTB detection), not extlinux — so it would never read our
+    `extlinux.conf` even with `001`. Armbian's `002` (mmc boot target + kernel/fdt/ramdisk load addrs)
+    and `004` (syslinux/extlinux) fix that.
+  - **Fix:** switch the U-Boot input to Armbian's exact source (`pyavitz/spacemit-u-boot` @
+    `k1-bl-v2.2.9-release`) and apply Armbian's patch set (001,002,003,004,007,008,009; 005/006 are
+    OrangePi-only), vendored under `nix/pkgs/u-boot/patches/`. The MBR + raw-offset image layout is
+    unchanged (it already matches the patch's 0x500/0x800 fallback). OpenSBI kept as-is (it builds and
+  is loaded by offset). Rebuilding U-Boot + image; reflash + retest pending.
+- **2026-06-15** — Patched U-Boot built cleanly (GCC 15, no issues on the pyavitz tree; all 7 patches
+  applied). Rebuilt the image; new `u-boot.itb` is 2,379,974 B (vs 2.0 MB before) and verified at
+  sector 2048; MBR + partitions unchanged. Awaiting reflash + serial capture. With `001`'s `BPI:`/
+  `K1X:` SPL debug prints enabled, even a partial boot should now narrate how far the SPL gets.
+- **2026-06-15** — Reflashed patched image. **It boots!** Serial captured cleanly via
+  `stty 115200 raw` + `cat` / `picocom -b 115200` (the earlier "garble" was minicom not actually
+  applying 115200 — 115200 is correct). Boot chain observed:
+  `try sd... -> U-Boot SPL 2022.10 Armbian -> DDR LPDDR4X 2400MT/s -> loads fit (opensbi+uboot) ->
+  U-Boot 2022.10 (Model: spacemit k1-x deb1, DRAM 8192 MB) -> MMC/PCIe(Gen2-x2)/eth ->
+  Retrieving /extlinux/extlinux.conf -> NixOS menu -> loads initrd + kernel Image 7.0.12`.
+  (Aside: "8 GB" on the label is the **RAM**, which trained fine — not eMMC.)
+  Then it stalls: **`bootarg overflow 262+0+0+1 > 256`** — the vendor U-Boot caps the kernel cmdline
+  at 256 bytes and our APPEND (long `init=/nix/store/...` + root=fstab/loglevel/lsm + our params) was
+  262. Falls through to NVMe (absent) -> `=>` prompt. **Fix:** trimmed `boot.kernelParams` (dropped
+  `console=tty1`, `root=UUID=`, `rootfstype=ext4` — redundant since the initrd mounts root by the
+  NIXOS_SD label) to get well under 256. Rebuilding image; reflash + retest pending.
+  (Future hardening: raise the U-Boot 256-byte bootargs cap so long cmdlines can't regress this.)
+- **2026-06-15** — Trimmed-cmdline image (APPEND now 186 B) **boots into the kernel + initrd!**
+  extlinux hands off, kernel + systemd-initrd come up. New stall: initrd times out on
+  `/dev/disk/by-label/NIXOS_SD` → emergency mode (and the locked emergency console blocked debugging).
+  Checked the built kernel config: K1 host drivers are builtin (`MMC_SDHCI_OF_K1=y`, `SPACEMIT_K1_CCU=y`,
+  pinctrl/gpio =y) but **`MMC_BLOCK=m`** — the block layer that creates `/dev/mmcblk*` is a module and
+  udev didn't autoload it in the initrd, so no block device → no root. **Fix (no kernel rebuild):**
+  `boot.initrd.kernelModules = [ "mmc_block" ]` to force-load it; plus
+  `boot.initrd.systemd.emergencyAccess = true` and `boot.consoleLogLevel = 7` so any further failure
+  drops to a usable root shell with `dmesg`. Rebuilding initrd + image; reflash + retest pending.
+- **2026-06-15** — `mmc_block` force-load worked (eMMC `mmcblk0` now enumerates, emergency shell now
+  accessible) but **root still not found**. Emergency-shell `cat /proc/partitions` shows ONLY
+  `mmcblk0` (+boot0/boot1/rpmb = eMMC, ~29 GiB) — **no SD-card block device, no /dev/disk/by-label**.
+  Decompiled the shipped `k1-bananapi-f3.dtb`: it has **only `mmc@d4281000` (eMMC)**; the SD-card slot
+  controller **`mmc@d4280000` (SDH0) is absent from the mainline DTS** (true in 7.0.12 and the 7.1
+  tree — `k1.dtsi` defines only `emmc`). So mainline supports K1 eMMC but not the BPI-F3 removable SD
+  slot; U-Boot reads SD via its own DTB, but the kernel has no node to bind. **Root cause of root
+  timeout.** User chose: re-add the SD slot via a **DT overlay**.
+  **Fix:** `hardware.deviceTree.overlays` adds `mmc@d4280000` under `/soc/storage-bus`, mirroring the
+  working eMMC node (`spacemit,k1-sdhci`) but with SDH0 clocks/resets (`CLK_SDH0`/`RESET_SDH0` from
+  `spacemit,k1-syscon.h`), IRQ 99, `bus-width=4`, `broken-cd`. No pinctrl/regulator yet (eMMC works
+  without them; U-Boot already powered/muxed the slot) — add if the card still isn't detected.
+  Rebuilding DTB+image (no kernel rebuild); reflash + retest pending.
+- **2026-06-16** — Overlay didn't apply at first: NixOS `apply_overlays.py` skips an overlay whose root
+  `compatible` doesn't intersect the base DTB's. **Fix:** added `compatible = "bananapi,bpi-f3",
+  "spacemit,k1";` to the overlay root. Verified the rebuilt DTB now has **both** `mmc@d4280000` (SD,
+  status okay) and `mmc@d4281000` (eMMC, status okay). Built full image; reflash + retest pending —
+  expecting the SD card to enumerate and root to mount.
+- **2026-06-16** — Overlay applied, but the kernel **panicked** in `spacemit_sdhci_set_uhs_signaling`
+  (load access fault reading `SDHCI_HOST_CONTROL2` @0x3E). That `VDD_180` write only runs when the
+  node is NOT `no-sdio`; the eMMC node sets `no-sd`/`no-sdio` and skips it. **Fix:** mark the SD slot
+  `no-mmc; no-sdio; no-1-8-v;` (correct for an SD-card slot, and avoids the faulting path).
+  (Also: `#` comments in the overlay broke the cpp/dtc parse — DTS comments must be `//`.)
+- **2026-06-16** — SD card then **enumerated** (`mmc0: new high speed SDXC card`, `mmcblk0 119 GiB`,
+  `NIXOS_SD` found, ext4 mounted) but **read-only** → `/sysroot/run` failed → emergency. The microSD
+  slot has no write-protect tab but the controller's WP sense reads "protected". **Fix:** `disable-wp;`.
+- **2026-06-16** — ✅✅ **FULL BOOT.** Reflashed; NixOS boots to `bpi-f3 login:` on hardware. Root mounts
+  **r/w**, switch-root + first-boot activation succeed. Working: both GbE (`k1_emac`, RTL8211F), NVMe
+  over PCIe, USB2/3 hubs, SSH daemon. Login `bpi`/`bpi-f3`.
+  Cleanup: `CONFIG_LOCALVERSION=" NixOS"` (U-Boot banner now reads "NixOS" not "Armbian"); removed the
+  `initcall_debug`/`consoleLogLevel=7` debug params (kept the working `earlycon=uart8250` + the SD
+  overlay + `mmc_block` force-load + `emergencyAccess`).
