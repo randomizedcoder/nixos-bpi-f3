@@ -3,7 +3,7 @@
 # Takes the flake's non-flake vendor source inputs and wires them into the
 # package derivations as `src`. Applied to the cross pkgset so everything is
 # built for riscv64.
-inputs: final: prev: {
+inputs: final: _prev: {
   # SpacemiT vendor OpenSBI -> fw_dynamic.itb
   k1-opensbi = final.callPackage ./pkgs/opensbi {
     src = inputs.opensbi-spacemit;

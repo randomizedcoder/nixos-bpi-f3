@@ -15,6 +15,10 @@ in
     inherit hashedPassword;
     isNormalUser = true;
     home = "/home/${username}";
-    extraGroups = [ "users" "networkmanager" "wheel" ];
+    extraGroups = [
+      "users"
+      "networkmanager"
+      "wheel"
+    ];
   };
 }

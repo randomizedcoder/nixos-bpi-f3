@@ -8,7 +8,12 @@
 # The SpacemiT bootloader blobs are dd'd to fixed raw sector offsets in the gap
 # ahead of partition 1 (postBuildCommands below), matching Armbian's
 # write_uboot_platform() in config/sources/families/spacemit.conf.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   # Stable UUID for the ext4 root filesystem, referenced from the kernel cmdline.
   rootPartitionUUID = "0a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d";
@@ -19,30 +24,35 @@ in
 {
   imports = [ ./sd-image.nix ];
 
-  boot.loader = {
-    grub.enable = false;
-    generic-extlinux-compatible.enable = true;
-  };
+  boot = {
+    loader = {
+      grub.enable = false;
+      generic-extlinux-compatible.enable = true;
+    };
 
-  # Keep this list short: the vendor U-Boot caps the kernel command line at 256
-  # bytes ("bootarg overflow ... > 256"), and NixOS already prepends a long
-  # init=/nix/store/...-nixos-system-.../init plus root=fstab/loglevel/lsm. The
-  # initrd mounts root by the NIXOS_SD label (via the generated fstab), so
-  # root=UUID/rootfstype are redundant here; console=tty1 is pointless headless.
-  boot.kernelParams = [
-    # Direct UART0 earlycon (0xd4017000, reg-shift=2/io-width=4 -> mmio32). Prints
-    # from the very start; earlycon=sbi produced nothing on this board.
-    "earlycon=uart8250,mmio32,0xd4017000"
-    "console=ttyS0,115200"
-    "rootwait"
-    "rw"
-  ];
+    # Keep this list short: the vendor U-Boot caps the kernel command line at 256
+    # bytes ("bootarg overflow ... > 256"), and NixOS already prepends a long
+    # init=/nix/store/...-nixos-system-.../init plus root=fstab/loglevel/lsm. The
+    # initrd mounts root by the NIXOS_SD label (via the generated fstab), so
+    # root=UUID/rootfstype are redundant here; console=tty1 is pointless headless.
+    kernelParams = [
+      # Direct UART0 earlycon (0xd4017000, reg-shift=2/io-width=4 -> mmio32). Prints
+      # from the very start; earlycon=sbi produced nothing on this board.
+      "earlycon=uart8250,mmio32,0xd4017000"
+      "console=ttyS0,115200"
+      "rootwait"
+      "rw"
+    ];
+  };
 
   fileSystems = lib.mkForce {
     "/boot/firmware" = {
       device = "/dev/disk/by-label/${config.sdImage.firmwarePartitionName}";
       fsType = "vfat";
-      options = [ "nofail" "noauto" ];
+      options = [
+        "nofail"
+        "noauto"
+      ];
     };
     "/" = {
       device = "/dev/disk/by-label/NIXOS_SD";

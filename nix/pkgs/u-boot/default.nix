@@ -72,7 +72,12 @@ buildUBoot {
     "u-boot.itb"
   ];
 
-  extraMeta.platforms = [ "riscv64-linux" ];
+  extraMeta = {
+    description = "U-Boot for the Banana Pi BPI-F3 (SpacemiT K1) — Armbian fork + patches, emits FSBL.bin / bootinfo_emmc.bin / u-boot.itb";
+    homepage = "https://github.com/pyavitz/spacemit-u-boot";
+    license = lib.licenses.gpl2Plus;
+    platforms = [ "riscv64-linux" ];
+  };
 
   filesToInstall = [
     "FSBL.bin"

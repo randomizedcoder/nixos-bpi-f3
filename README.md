@@ -72,16 +72,20 @@ from source and `dd`'d into the image during the build.
 
 ## Repository layout
 
-The `flake.nix` is intentionally thin; everything substantive is a module/derivation under `nix/`:
+`flake.nix` (flake-parts) is intentionally thin; everything substantive is a module/derivation under
+`nix/`:
 
 ```
-flake.nix                              # inputs + outputs wiring
+flake.nix                              # flake-parts: inputs + perSystem (packages/formatter/checks/devShell)
 nix/
   cross.nix                            # cross target: riscv64, rv64gcv / lp64d
   overlay.nix                          # exposes the bootloader packages
   modules/
-    bpi-f3.nix                         # board module: kernel, K1 Kconfig, console, firmware,
-                                       #   + the SD-card-slot device-tree overlay (mmc@d4280000)
+    default.nix                        # aggregator: imports the modules below
+    kernel.nix                         # kernel package + forced K1 Kconfig + initrd
+    hardware.nix                       # device tree + the SD-card-slot overlay + firmware
+    sd-overlay.dts                     # the re-added SD-slot controller node (mmc@d4280000)
+    base.nix                           # console/getty, ssh, packages, nix settings, stateVersion
     user-group.nix                     # default user / hostname
     sd-image/
       sd-image.nix                     # patched generic sd-image module (MBR + raw-blob dd hook)
@@ -90,6 +94,14 @@ nix/
     u-boot/default.nix                 # Armbian U-Boot fork -> FSBL.bin, bootinfo_emmc.bin, u-boot.itb
     u-boot/patches/                    # Armbian's u-boot-spacemit-k1 patch set (vendored)
     opensbi/default.nix                # vendor OpenSBI -> fw_dynamic.itb
+```
+
+## Development
+
+```sh
+nix fmt           # format (treefmt: nixfmt + deadnix)
+nix flake check   # eval + formatting + statix lint gate
+nix develop       # shell with nixfmt, deadnix, statix, dtc, nix-output-monitor
 ```
 
 ## Build outputs

@@ -172,3 +172,11 @@ Legend: ⬜ todo · 🟡 in progress · ✅ done · ⛔ blocked
   Cleanup: `CONFIG_LOCALVERSION=" NixOS"` (U-Boot banner now reads "NixOS" not "Armbian"); removed the
   `initcall_debug`/`consoleLogLevel=7` debug params (kept the working `earlycon=uart8250` + the SD
   overlay + `mmc_block` force-load + `emergencyAccess`).
+- **2026-06-16** — Nix refactor for maintainer-grade quality (pure refactor — `nix eval` of
+  `.#sdImage`/`.#uboot`/`.#opensbi` drvPaths **identical** before/after, image unchanged). Converted
+  `flake.nix` to **flake-parts** + **treefmt-nix**; built the cross pkgset once and injected via
+  `nixpkgs.pkgs` (removed the duplicated overlay/crossSystem). Split the old `bpi-f3.nix` into
+  `kernel.nix` / `hardware.nix` / `base.nix` under a `modules/default.nix` aggregator, and extracted the
+  DT overlay to `sd-overlay.dts` (via `builtins.readFile`, byte-identical). Added `nix fmt`
+  (nixfmt-rfc-style + deadnix), `nix flake check` (treefmt + statix), and a `nix develop` shell; tidied
+  package `meta`; grouped repeated attr keys per statix. `nix flake check` passes clean.

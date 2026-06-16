@@ -4,14 +4,21 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # SpacemiT vendor bootloader sources (non-flake). Pinned to the
-    # k1-bl-v2.2.10-release tag revisions. See nix/pkgs/{u-boot,opensbi}.
-    # Armbian's U-Boot fork — built with Armbian's patch set (see nix/pkgs/u-boot).
-    # The stock vendor U-Boot can't extlinux-boot a generic distro; this can.
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
+
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
+
+    # Bootloader sources (non-flake), pinned via flake.lock.
+    #
+    # U-Boot is Armbian's fork + its patch set (see nix/pkgs/u-boot): the stock
+    # vendor U-Boot can't extlinux-boot a generic distro, this can.
     uboot-spacemit = {
       url = "github:pyavitz/spacemit-u-boot/k1-bl-v2.2.9-release";
       flake = false;
     };
+    # SpacemiT vendor OpenSBI (gitee), tag k1-bl-v2.2.10-release.
     opensbi-spacemit = {
       url = "git+https://gitee.com/spacemit-buildroot/opensbi.git?ref=k1-bl-v2.2.y&rev=34143f5f665be8b86ebb71b8085a1ade7f8b97ad";
       flake = false;
@@ -19,40 +26,69 @@
   };
 
   outputs =
-    { self, nixpkgs, ... }@inputs:
-    let
-      crossSystemConfig = import ./nix/cross.nix;
-      overlay = import ./nix/overlay.nix inputs;
+    inputs@{ flake-parts, nixpkgs, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } (
+      let
+        overlay = import ./nix/overlay.nix inputs;
 
-      # Cross pkgset: build host x86_64-linux, target riscv64. The overlay adds
-      # the bootloader packages (k1-opensbi, bpi-f3-uboot).
-      pkgsCross = import nixpkgs {
-        localSystem = "x86_64-linux";
-        crossSystem = crossSystemConfig;
-        overlays = [ overlay ];
-      };
-    in
-    {
-      overlays.default = overlay;
+        # Cross pkgset: build host x86_64-linux -> target riscv64, with the
+        # bootloader overlay. Built once and shared, so the overlay + crossSystem
+        # are never applied twice.
+        pkgsCross = import nixpkgs {
+          localSystem = "x86_64-linux";
+          crossSystem = import ./nix/cross.nix;
+          overlays = [ overlay ];
+        };
+      in
+      {
+        systems = [ "x86_64-linux" ];
+        imports = [ inputs.treefmt-nix.flakeModule ];
 
-      nixosConfigurations.bpi-f3-cross = nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
+        flake = {
+          overlays.default = overlay;
+
+          nixosConfigurations.bpi-f3-cross = nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            modules = [
+              { nixpkgs.pkgs = pkgsCross; }
+              ./nix/modules
+            ];
+          };
+        };
+
+        perSystem =
+          { pkgs, ... }:
           {
-            nixpkgs.crossSystem = crossSystemConfig;
-            nixpkgs.overlays = [ overlay ];
-          }
-          ./nix/modules/bpi-f3.nix
-          ./nix/modules/sd-image/sd-image-bpi-f3.nix
-          ./nix/modules/user-group.nix
-        ];
-      };
+            packages = {
+              default = inputs.self.nixosConfigurations.bpi-f3-cross.config.system.build.sdImage;
+              sdImage = inputs.self.nixosConfigurations.bpi-f3-cross.config.system.build.sdImage;
+              uboot = pkgsCross.bpi-f3-uboot;
+              opensbi = pkgsCross.k1-opensbi;
+            };
 
-      packages.x86_64-linux = {
-        default = self.nixosConfigurations.bpi-f3-cross.config.system.build.sdImage;
-        sdImage = self.nixosConfigurations.bpi-f3-cross.config.system.build.sdImage;
-        uboot = pkgsCross.bpi-f3-uboot;
-        opensbi = pkgsCross.k1-opensbi;
-      };
-    };
+            # `nix fmt` + `nix flake check`'s formatting gate (nixfmt-rfc-style + deadnix).
+            treefmt = {
+              projectRootFile = "flake.nix";
+              programs.nixfmt.enable = true;
+              programs.deadnix.enable = true;
+            };
+
+            # `nix flake check` lint gate.
+            checks.statix = pkgs.runCommandLocal "statix-check" { nativeBuildInputs = [ pkgs.statix ]; } ''
+              statix check "${inputs.self}"
+              touch "$out"
+            '';
+
+            devShells.default = pkgs.mkShellNoCC {
+              packages = with pkgs; [
+                nixfmt
+                deadnix
+                statix
+                dtc
+                nix-output-monitor
+              ];
+            };
+          };
+      }
+    );
 }
