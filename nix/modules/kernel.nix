@@ -40,6 +40,15 @@
           SPACEMIT_K1_EMAC = module;
         };
       }
+      {
+        # Make `reboot`/`poweroff` actually reset the board. The vendor OpenSBI
+        # has no SBI System-Reset (SRST) extension, so Linux's only working
+        # reset path is the P1 PMIC driver (POWER_RESET_SPACEMIT_P1, builtin) —
+        # but the MFD core doesn't register its cell, so it never binds. This
+        # adds the cell. See the patch header for the full rationale.
+        name = "spacemit-p1-reboot-cell";
+        patch = ./spacemit-p1-reboot-cell.patch;
+      }
     ];
 
     initrd = {
@@ -50,6 +59,13 @@
         "xhci_hcd"
         "usbhid"
         "hid_generic"
+        # Root-on-NVMe (see nix/modules/nvme). The K1 PCIe controller is built
+        # into the kernel (CONFIG_PCIE_SPACEMIT_K1=y / PHY_SPACEMIT_K1_PCIE=y),
+        # so the bus is enumerated during kernel init and udev autoloads the
+        # NVMe driver in stage-1. Only BLK_DEV_NVME is modular (=m upstream),
+        # so it must be made available to the initrd here; nvme_core and the
+        # rest of the closure are pulled in automatically.
+        "nvme"
       ];
 
       # MMC_BLOCK is =m upstream and udev didn't autoload it in the initrd (root

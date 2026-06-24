@@ -302,22 +302,37 @@ in
       if [ -f /nix-path-registration ]; then
         set -euo pipefail
         set -x
-        # Figure out device names for the boot device and root filesystem.
-        rootPart=$(${pkgs.util-linux}/bin/findmnt -n -o SOURCE /)
-        bootDevice=$(lsblk -npo PKNAME $rootPart)
-        partNum=$(lsblk -npo MAJ:MIN $rootPart | ${pkgs.gawk}/bin/awk -F: '{print $2}')
 
-        # Resize the root partition and the filesystem to fit the disk
-        echo ",+," | sfdisk -N$partNum --no-reread $bootDevice
-        ${pkgs.parted}/bin/partprobe
-        ${pkgs.e2fsprogs}/bin/resize2fs $rootPart
-
-        # Register the contents of the initial Nix store
+        # Register the contents of the initial Nix store FIRST. This is the
+        # correctness-critical step: until it runs, every shipped store path
+        # (the running system AND the NVMe-root toplevel shipped via
+        # sdImage.storePaths) is present on disk but *unregistered*, so
+        # nixos-rebuild and the NVMe migration's `nix-env --set` fail with
+        # "path ... required, but no substituter can build it". It must NOT be
+        # gated behind the partition resize below: on this board's marginal SD
+        # slot the early-boot resize can fail/stall, and under `set -e` that
+        # previously skipped registration entirely — silently breaking the NVMe
+        # migration much later with a baffling error. Order it first so a flaky
+        # resize can never cost us the registration.
         ${config.nix.package.out}/bin/nix-store --load-db < /nix-path-registration
 
         # nixos-rebuild also requires a "system" profile and an /etc/NIXOS tag.
         touch /etc/NIXOS
         ${config.nix.package.out}/bin/nix-env -p /nix/var/nix/profiles/system --set /run/current-system
+
+        # Resize the root partition + filesystem to fill the card. Best-effort:
+        # a failure here must not undo the registration above (the `if` keeps
+        # `set -e` from aborting the block on a resize error).
+        rootPart=$(${pkgs.util-linux}/bin/findmnt -n -o SOURCE /)
+        bootDevice=$(lsblk -npo PKNAME $rootPart)
+        partNum=$(lsblk -npo MAJ:MIN $rootPart | ${pkgs.gawk}/bin/awk -F: '{print $2}')
+        if echo ",+," | sfdisk -N$partNum --no-reread $bootDevice \
+          && ${pkgs.parted}/bin/partprobe \
+          && ${pkgs.e2fsprogs}/bin/resize2fs $rootPart; then
+          echo "root filesystem resized to fill the card."
+        else
+          echo "warning: root partition resize failed; continuing (store is registered)."
+        fi
 
         # Prevents this from running on later boots.
         rm -f /nix-path-registration

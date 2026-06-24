@@ -172,6 +172,47 @@ timedatectl                              # want 'System clock synchronized: yes'
 sudo systemctl restart systemd-timesyncd
 ```
 
+## Fast storage: root on the NVMe
+
+The SD card is the bottleneck — under a Nix/kernel build it saturates the MMC controller (you'll see `mmc_rescan … blocked for more than 120 seconds` in `dmesg`). The fix is to move `/` (and the whole Nix store) onto the NVMe, which is far faster. Boot **stays on the SD card**: the SpacemiT K1 BootROM has no PCIe driver, so the first-stage bootloader (FSBL → OpenSBI → U-Boot) can only come from SD/eMMC. The kernel + initrd live on the SD's FAT partition, the initrd brings up PCIe (built into the kernel) + NVMe (an initrd module), and root is mounted from the NVMe by label. **Keep the SD card inserted** afterwards.
+
+### How it works
+
+- `nixosConfigurations.bpi-f3-nvme` is the same system as the SD build but with `/` on `by-label/NIXOS_NVME` ([`nix/modules/nvme/root.nix`](./nix/modules/nvme/root.nix)). Its toplevel is shipped **inside** the SD image, so migration needs no network and no on-device compiling.
+- [`nix/modules/nvme/provision.nix`](./nix/modules/nvme/provision.nix) adds the `bpi-f3-nvme-install` command and a first-boot service.
+
+### Brand-new device (automatic)
+
+On first boot, if the NVMe is **completely blank**, the system auto-migrates onto it and reboots — you'll see the progress on the serial console. An NVMe that already holds any partition table or filesystem is left untouched. Disable with `bpi-f3.nvme.autoInstall = false;`.
+
+### Manually (or to re-run)
+
+```sh
+sudo bpi-f3-nvme-install            # interactive: prompts before erasing the NVMe
+sudo bpi-f3-nvme-install --yes      # skip the confirmation
+sudo bpi-f3-nvme-install --yes --reboot
+```
+
+It partitions + formats the NVMe (`NIXOS_NVME`), clones the running system onto it (`rsync`, preserving all state), points the SD boot config at the NVMe-root system, and reboots. After that, `/` is on the NVMe and on-device `nixos-rebuild`s target the `bpi-f3-nvme` configuration. (The migration **wipes** the NVMe — it refuses to touch a mounted device, but there is no undo.)
+
+### Wiping the NVMe
+
+To erase the NVMe back to blank (e.g. to re-test the auto-install from a clean state):
+
+```sh
+sudo bpi-f3-nvme-wipe          # warns, shows the disk, and defaults to aborting
+sudo bpi-f3-nvme-wipe --yes    # skip the confirmation
+```
+
+It refuses to touch a mounted device, so run it from the SD-booted system (not while `/` is on the NVMe).
+
+### After migration
+
+- **Swap:** the NVMe system creates `/swapfile` sized to RAM at boot (read from `MemTotal`, so it adapts to 4/8/16 GB boards) — headroom against OOM-kills during heavy `make -j` kernel builds.
+- **On-device rebuilds:** `nixos-rebuild switch` works directly on the board — the NVMe system installs the kernel/initrd/`extlinux.conf` to the SD's `/boot/firmware` (auto-mounted) where U-Boot reads them, so kernel changes take effect without reflashing.
+- **Reboot quirk:** a plain `reboot` sometimes hangs at `reboot: Restarting system` (the vendor OpenSBI/DT doesn't fully wire SBI/PSCI system-reset on this board). If it doesn't come back within a few seconds, **power-cycle** — a cold boot always works.
+- The SD slot is pinned `non-removable` in the DT overlay so it stays enumerated under Linux (software card-detect polling otherwise spuriously dropped it, taking `/boot/firmware` with it).
+
 ## Challenges worked around
 
 Getting this to boot on real hardware meant solving a chain of non-obvious problems. They're recorded here (and in [`PROGRESS.md`](./PROGRESS.md)) so the config's quirks make sense to whoever reads it next:
