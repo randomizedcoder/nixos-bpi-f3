@@ -11,6 +11,11 @@
     openFirewall = lib.mkDefault true;
   };
 
+  # Headless box with no persisted RTC and a hostname that's easy to lose on a
+  # busy LAN: advertise via LLDP so it shows up in switch/`lldpcli` neighbour
+  # tables (find it without console access). Lightweight; no open ports.
+  services.lldpd.enable = true;
+
   environment.systemPackages = with pkgs; [
     htop
     minicom

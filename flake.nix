@@ -1,3 +1,22 @@
+#
+# Banana Pi F3 flake.nix
+#
+# Build (cross-compiled x86_64 -> riscv64):
+#   nix build .#sdImage     # bootable SD image (default target; ./result/sd-image/*.img)
+#   nix build .#uboot       # U-Boot blobs: FSBL.bin, bootinfo_emmc.bin, u-boot.itb
+#   nix build .#opensbi     # OpenSBI fw_dynamic.itb
+#   nix build .#nixosConfigurations.bpi-f3-nvme.config.system.build.toplevel  # NVMe-root system
+#   nix flake check         # eval both configs + treefmt + statix
+#   nix fmt                 # format the tree (nixfmt + deadnix; prettier for *.md)
+#
+# Flash the built image to the SD card (replace /dev/sdb with your card!):
+# sudo umount /dev/sdb1 && sudo umount /dev/sdb2
+# sudo dd if=$(readlink -f result/sd-image/*.img) of=/dev/sdb bs=4M conv=fsync status=progress; sync; sudo eject /dev/sdb
+#
+# NVMe needs to be wiped to retest the full insall process.  Once wiped, the boot happens via SD card,
+# and then from SD the NVMe gets formatted and installed
+# sudo bpi-f3-nvme-wipe
+#
 {
   description = "NixOS for the Banana Pi BPI-F3 (SpacemiT K1, RISC-V), cross-compiled from x86_64";
 
@@ -39,6 +58,20 @@
           crossSystem = import ./nix/cross.nix;
           overlays = [ overlay ];
         };
+
+        # Modules shared by the SD-root and NVMe-root systems.
+        commonModules = [
+          { nixpkgs.pkgs = pkgsCross; }
+          ./nix/modules
+        ];
+
+        # NVMe-root system: same as the SD system but with `/` on the NVMe.
+        # Built ahead of the SD system so its toplevel can be shipped inside the
+        # SD image (see nix/modules/nvme/provision.nix).
+        nvmeSystem = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = commonModules ++ [ ./nix/modules/nvme/root.nix ];
+        };
       in
       {
         systems = [ "x86_64-linux" ];
@@ -47,12 +80,20 @@
         flake = {
           overlays.default = overlay;
 
-          nixosConfigurations.bpi-f3-cross = nixpkgs.lib.nixosSystem {
-            system = "x86_64-linux";
-            modules = [
-              { nixpkgs.pkgs = pkgsCross; }
-              ./nix/modules
-            ];
+          nixosConfigurations = {
+            # SD-root system (what the SD image boots). Carries the NVMe-root
+            # toplevel + the `bpi-f3-nvme-install` migrator (nvme/provision.nix).
+            bpi-f3-cross = nixpkgs.lib.nixosSystem {
+              system = "x86_64-linux";
+              specialArgs = {
+                nvmeToplevel = nvmeSystem.config.system.build.toplevel;
+              };
+              modules = commonModules ++ [ ./nix/modules/nvme/provision.nix ];
+            };
+
+            # NVMe-root system. Switched into by `bpi-f3-nvme-install`; future
+            # `nixos-rebuild`s on the device target this configuration.
+            bpi-f3-nvme = nvmeSystem;
           };
         };
 
